@@ -1,4 +1,4 @@
-# 4Alpha Factor Mining（Binance USD-M）
+# Alpha Factor Mining（Binance USD-M）
 
 这是一个面向加密永续合约的横截面因子挖掘与评估框架，目标是把“数据拉取 -> 因子生成 -> 统计检验 -> 组合信号 -> 策略回测 -> 可视化”做成可重复、可扩展、可对比的研究流水线。
 
