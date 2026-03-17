@@ -9,29 +9,78 @@ from .evaluation import score_factor_summary, select_diversified_factors
 
 
 EPS = 1e-9
+RETURNS_COLUMNS = ["timestamp", "strategy", "gross_return", "cost", "turnover", "net_return"]
+NAV_COLUMNS = ["timestamp", "strategy", "nav", "equity", "drawdown"]
+SUMMARY_COLUMNS = [
+    "strategy",
+    "periods",
+    "total_return",
+    "annual_return",
+    "annual_vol",
+    "sharpe",
+    "max_drawdown",
+    "calmar",
+    "win_rate",
+    "avg_turnover",
+    "avg_cost",
+    "final_equity",
+]
+EVENT_COLUMNS = [
+    "timestamp",
+    "strategy",
+    "symbol",
+    "event_type",
+    "prev_weight",
+    "new_weight",
+    "delta_weight",
+    "signal_value",
+    "signal_rank",
+    "trigger_reason",
+]
 
 
 @dataclass
 class BacktestConfig:
     timeframe: str = "4h"
     horizon_bars: int = 12
-    top_quantile: float = 0.2
+    top_quantile: float = 0.15
     taker_fee: float = 0.001
     initial_capital: float = 100000.0
-    max_abs_weight: float = 0.2
-    vol_lookback: int = 24
+    max_abs_weight: float = 0.15
+    vol_lookback: int = 48
     min_assets_per_timestamp: int = 8
-    multi_factor_top_k: int = 8
-    signal_smoothing_span: int = 6
-    execution_alpha: float = 0.35
-    rebalance_interval: int = 0
-    target_gross_exposure: float = 1.0
+    multi_factor_top_k: int = 6
+    signal_smoothing_span: int = 10
+    execution_alpha: float = 0.20
+    rebalance_interval: int = 24
+    target_gross_exposure: float = 0.80
     start_date: str | None = None
     end_date: str | None = None
     save_position_events: bool = True
     position_event_threshold: float = 1e-4
-    factor_corr_threshold: float = 0.85
-    factor_diversify_pool_size: int = 120
+    factor_corr_threshold: float = 0.75
+    factor_diversify_pool_size: int = 80
+
+
+def _empty_returns_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=RETURNS_COLUMNS)
+
+
+def _empty_nav_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=NAV_COLUMNS)
+
+
+def _empty_summary_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=SUMMARY_COLUMNS)
+
+
+def _empty_events_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=EVENT_COLUMNS)
+
+
+def _clamp_quantile(value: float | None, default: float = 0.2) -> float:
+    raw = default if value is None else float(value)
+    return float(min(max(raw, 0.05), 0.45))
 
 
 def _periods_per_year(timeframe: str) -> int:
@@ -81,7 +130,7 @@ def _signal_to_equal_weight_long_short(
         valid = row.dropna()
         if len(valid) < min_assets:
             continue
-        q = min(max(top_quantile, 0.05), 0.45)
+        q = _clamp_quantile(top_quantile)
         long_mask = valid >= (1.0 - q)
         short_mask = valid <= q
 
@@ -232,7 +281,7 @@ def _trigger_reason(
     if mode == "quantile":
         if signal_rank is None or not np.isfinite(signal_rank):
             return "missing_rank"
-        q = float(min(max(top_quantile or 0.2, 0.05), 0.45))
+        q = _clamp_quantile(top_quantile, default=0.2)
         if signal_rank >= 1.0 - q:
             return "long_quantile_signal"
         if signal_rank <= q:
@@ -263,20 +312,7 @@ def _build_position_events(
     if end_ts is not None:
         idx = idx[idx <= end_ts]
     if len(idx) == 0:
-        return pd.DataFrame(
-            columns=[
-                "timestamp",
-                "strategy",
-                "symbol",
-                "event_type",
-                "prev_weight",
-                "new_weight",
-                "delta_weight",
-                "signal_value",
-                "signal_rank",
-                "trigger_reason",
-            ]
-        )
+        return _empty_events_df()
 
     cols = returns_fwd.columns.intersection(weights.columns)
     w = weights.loc[idx, cols].fillna(0.0)
@@ -319,20 +355,7 @@ def _build_position_events(
         prev = curr
 
     if not rows:
-        return pd.DataFrame(
-            columns=[
-                "timestamp",
-                "strategy",
-                "symbol",
-                "event_type",
-                "prev_weight",
-                "new_weight",
-                "delta_weight",
-                "signal_value",
-                "signal_rank",
-                "trigger_reason",
-            ]
-        )
+        return _empty_events_df()
     return pd.DataFrame(rows).sort_values(["timestamp", "strategy", "symbol"]).reset_index(drop=True)
 
 
@@ -402,6 +425,8 @@ def _build_single_factor_signal(
     factor_df: pd.DataFrame,
     summary_df: pd.DataFrame,
 ) -> tuple[str, pd.DataFrame]:
+    # Single-factor long/short uses exactly one factor: the highest scored entry
+    # from `score_factor_summary`, then multiplies by direction (+1/-1).
     scored = _prepare_factor_scoring(summary_df)
     if scored.empty:
         return "single_factor_long_short", pd.DataFrame()
@@ -519,39 +544,7 @@ def run_strategy_backtests(
     config: BacktestConfig,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if market_df.empty:
-        empty_ret = pd.DataFrame(columns=["timestamp", "strategy", "gross_return", "cost", "turnover", "net_return"])
-        empty_nav = pd.DataFrame(columns=["timestamp", "strategy", "nav", "equity", "drawdown"])
-        empty_summary = pd.DataFrame(
-            columns=[
-                "strategy",
-                "periods",
-                "total_return",
-                "annual_return",
-                "annual_vol",
-                "sharpe",
-                "max_drawdown",
-                "calmar",
-                "win_rate",
-                "avg_turnover",
-                "avg_cost",
-                "final_equity",
-            ]
-        )
-        empty_events = pd.DataFrame(
-            columns=[
-                "timestamp",
-                "strategy",
-                "symbol",
-                "event_type",
-                "prev_weight",
-                "new_weight",
-                "delta_weight",
-                "signal_value",
-                "signal_rank",
-                "trigger_reason",
-            ]
-        )
-        return empty_ret, empty_nav, empty_summary, empty_events
+        return _empty_returns_df(), _empty_nav_df(), _empty_summary_df(), _empty_events_df()
 
     realized_returns = _returns_matrix(market_df)
     returns_fwd = _forward_one_bar_returns(market_df)
@@ -560,26 +553,7 @@ def run_strategy_backtests(
     if start_ts is not None and end_ts is not None and start_ts > end_ts:
         raise ValueError(f"Invalid backtest range: start_date({config.start_date}) > end_date({config.end_date})")
     if returns_fwd.empty:
-        empty_events = pd.DataFrame(
-            columns=[
-                "timestamp",
-                "strategy",
-                "symbol",
-                "event_type",
-                "prev_weight",
-                "new_weight",
-                "delta_weight",
-                "signal_value",
-                "signal_rank",
-                "trigger_reason",
-            ]
-        )
-        return (
-            pd.DataFrame(columns=["timestamp", "strategy", "gross_return", "cost", "turnover", "net_return"]),
-            pd.DataFrame(columns=["timestamp", "strategy", "nav", "equity", "drawdown"]),
-            pd.DataFrame(columns=["strategy", "periods", "total_return", "annual_return", "annual_vol", "sharpe"]),
-            empty_events,
-        )
+        return _empty_returns_df(), _empty_nav_df(), _empty_summary_df(), _empty_events_df()
 
     strategy_returns_list: list[pd.DataFrame] = []
     event_frames: list[pd.DataFrame] = []
@@ -718,49 +692,11 @@ def run_strategy_backtests(
             )
 
     if not strategy_returns_list:
-        empty_events = pd.DataFrame(
-            columns=[
-                "timestamp",
-                "strategy",
-                "symbol",
-                "event_type",
-                "prev_weight",
-                "new_weight",
-                "delta_weight",
-                "signal_value",
-                "signal_rank",
-                "trigger_reason",
-            ]
-        )
-        return (
-            pd.DataFrame(columns=["timestamp", "strategy", "gross_return", "cost", "turnover", "net_return"]),
-            pd.DataFrame(columns=["timestamp", "strategy", "nav", "equity", "drawdown"]),
-            pd.DataFrame(columns=["strategy", "periods", "total_return", "annual_return", "annual_vol", "sharpe"]),
-            empty_events,
-        )
+        return _empty_returns_df(), _empty_nav_df(), _empty_summary_df(), _empty_events_df()
 
     strategy_returns = pd.concat(strategy_returns_list, ignore_index=True)
     if strategy_returns.empty:
-        empty_events = pd.DataFrame(
-            columns=[
-                "timestamp",
-                "strategy",
-                "symbol",
-                "event_type",
-                "prev_weight",
-                "new_weight",
-                "delta_weight",
-                "signal_value",
-                "signal_rank",
-                "trigger_reason",
-            ]
-        )
-        return (
-            pd.DataFrame(columns=["timestamp", "strategy", "gross_return", "cost", "turnover", "net_return"]),
-            pd.DataFrame(columns=["timestamp", "strategy", "nav", "equity", "drawdown"]),
-            pd.DataFrame(columns=["strategy", "periods", "total_return", "annual_return", "annual_vol", "sharpe"]),
-            empty_events,
-        )
+        return _empty_returns_df(), _empty_nav_df(), _empty_summary_df(), _empty_events_df()
     periods_per_year = _periods_per_year(config.timeframe)
 
     summary_list: list[pd.DataFrame] = []
@@ -781,18 +717,5 @@ def run_strategy_backtests(
     if event_frames:
         events_df = pd.concat(event_frames, ignore_index=True).sort_values(["timestamp", "strategy", "symbol"]).reset_index(drop=True)
     else:
-        events_df = pd.DataFrame(
-            columns=[
-                "timestamp",
-                "strategy",
-                "symbol",
-                "event_type",
-                "prev_weight",
-                "new_weight",
-                "delta_weight",
-                "signal_value",
-                "signal_rank",
-                "trigger_reason",
-            ]
-        )
+        events_df = _empty_events_df()
     return strategy_returns, nav_df_out, summary_df_out, events_df

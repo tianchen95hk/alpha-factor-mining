@@ -14,16 +14,20 @@ from .utils import timeframe_to_pandas_freq
 class BinanceUSDMDataLoader:
     api_key: str | None = None
     api_secret: str | None = None
+    use_proxy: bool = False
+    proxy_url: str | None = None
 
     def __post_init__(self) -> None:
-        self.exchange = ccxt.binanceusdm(
-            {
-                "apiKey": self.api_key or "",
-                "secret": self.api_secret or "",
-                "enableRateLimit": True,
-                "options": {"defaultType": "future"},
-            }
-        )
+        cfg: dict[str, object] = {
+            "apiKey": self.api_key or "",
+            "secret": self.api_secret or "",
+            "enableRateLimit": True,
+            "options": {"defaultType": "future"},
+        }
+        proxy = (self.proxy_url or "").strip()
+        if self.use_proxy and proxy:
+            cfg["httpsProxy"] = proxy
+        self.exchange = ccxt.binanceusdm(cfg)
 
     def get_universe(self, symbols: list[str] | None, top_n: int = 30) -> list[str]:
         if symbols:

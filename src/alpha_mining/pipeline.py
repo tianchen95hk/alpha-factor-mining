@@ -173,7 +173,12 @@ def run_research_pipeline(
         if cache_file.exists() and not refresh_cache:
             market_df = load_market_cache(cache_file)
         else:
-            loader = BinanceUSDMDataLoader(api_key=api_key, api_secret=api_secret)
+            loader = BinanceUSDMDataLoader(
+                api_key=api_key,
+                api_secret=api_secret,
+                use_proxy=cfg.use_proxy,
+                proxy_url=cfg.proxy_url,
+            )
             universe = loader.get_universe(cfg.symbols, cfg.top_n_symbols)
             market_df = loader.fetch_market_data(
                 symbols=universe,
