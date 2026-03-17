@@ -1,0 +1,9 @@
+exchange: binanceusdm
+timeframe: 1h
+lookback_days: 180
+horizon_bars: 12
+top_n_symbols: 30
+symbols: []
+cache_path: data/cache/binance_usdm_market.csv
+results_dir: results
+min_assets_per_timestamp: 8
